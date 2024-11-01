@@ -24,6 +24,8 @@ ThreadPool_t *ThreadPool_create(unsigned int num)
 
     // explicitly null-initialize the job queue
     tp->jobs.size = 0;
+    pthread_mutex_init(&tp->jobs.lock, NULL);
+    pthread_cond_init(&tp->jobs.notEmpty, NULL);
     tp->jobs.head = NULL;
     tp->jobs.tail = NULL;
 
@@ -31,7 +33,7 @@ ThreadPool_t *ThreadPool_create(unsigned int num)
     tp->threads = malloc(sizeof(pthread_t) * num);
     for (int i = 0; i < num; i++)
     {
-        pthread_create(&(tp->threads[i]), NULL, (void *) Thread_run, tp);
+        pthread_create(&tp->threads[i], NULL, (void *) Thread_run, tp);
     }
 
     return tp;
@@ -57,7 +59,7 @@ void ThreadPool_destroy(ThreadPool_t *tp)
     {
         // cancel each thread now. should have no effect if they're alr done
         pthread_cancel(tp->threads[i]);
-        // wait to join with the thread to ensure total destruction
+        // wait to join with the thread to ensure resource reclamation
         pthread_join(tp->threads[i], NULL);
     }
 
@@ -85,14 +87,17 @@ bool ThreadPool_add_job(ThreadPool_t *tp, thread_func_t func, void *arg)
     newJob->arg = arg;
     newJob->next = NULL;
 
-    // attach the job to the tail of the queue
-    // TODO protect the queue with a lock while pushing to it
+    // attach the job to the tail of the queue (critical section)
+    // TODO implement SJF
+    pthread_mutex_lock(&tp->jobs.lock);
     if (tp->jobs.size == 0)
         tp->jobs.head = newJob;
     else
         tp->jobs.tail->next = newJob;
     tp->jobs.tail = newJob;
-    tp->jobs.size++;
+    if (++tp->jobs.size == 1)
+        pthread_cond_signal(&tp->jobs.notEmpty);
+    pthread_mutex_unlock(&tp->jobs.lock);
 
     return true;
 }
@@ -107,14 +112,18 @@ bool ThreadPool_add_job(ThreadPool_t *tp, thread_func_t func, void *arg)
  */
 ThreadPool_job_t *ThreadPool_get_job(ThreadPool_t *tp)
 {
-    // TODO write-protect the queue
+    // pop the first job from head of queue (critical section)
+    pthread_mutex_lock(&tp->jobs.lock);
+    while (tp->jobs.size == 0)  // relinquish lock if no jobs right now
+        pthread_cond_wait(&tp->jobs.notEmpty, &tp->jobs.lock);
+
+    // if we are here, there is a job available, and we have the lock
     ThreadPool_job_t *nextJob = tp->jobs.head;
-    if (nextJob != NULL)
-    {
-        tp->jobs.size--;
-        tp->jobs.head = nextJob->next;
-        if (tp->jobs.size == 0)  // this was the last job
-            tp->jobs.tail = NULL;
-    }
+    tp->jobs.size--;
+    tp->jobs.head = nextJob->next;
+    if (tp->jobs.size == 0)  // this was the last job
+        tp->jobs.tail = NULL;
+    pthread_mutex_unlock(&tp->jobs.lock);
+
     return nextJob;
 }
