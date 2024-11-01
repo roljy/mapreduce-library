@@ -4,6 +4,7 @@
 // library includes
 #include <stdio.h>      // printf
 #include <stdlib.h>     // malloc
+#include <stdbool.h>    // true/false
 #include <pthread.h>    // pthread_create, ...
 
 // user includes
@@ -21,10 +22,12 @@ ThreadPool_t *ThreadPool_create(unsigned int num)
 {
     ThreadPool_t *tp = malloc(sizeof(ThreadPool_t));
     tp->num_threads = num;
+    tp->busy = malloc(sizeof(pthread_mutex_t) * num);
 
     // explicitly null-initialize the job queue
     tp->jobs.size = 0;
     pthread_mutex_init(&tp->jobs.lock, NULL);
+    pthread_cond_init(&tp->jobs.empty, NULL);
     pthread_cond_init(&tp->jobs.notEmpty, NULL);
     tp->jobs.head = NULL;
     tp->jobs.tail = NULL;
@@ -33,6 +36,7 @@ ThreadPool_t *ThreadPool_create(unsigned int num)
     tp->threads = malloc(sizeof(pthread_t) * num);
     for (int i = 0; i < num; i++)
     {
+        pthread_mutex_init(&tp->busy[i], NULL);
         pthread_create(&tp->threads[i], NULL, (void *) Thread_run, tp);
     }
 
@@ -122,8 +126,69 @@ ThreadPool_job_t *ThreadPool_get_job(ThreadPool_t *tp)
     tp->jobs.size--;
     tp->jobs.head = nextJob->next;
     if (tp->jobs.size == 0)  // this was the last job
+    {
         tp->jobs.tail = NULL;
-    pthread_mutex_unlock(&tp->jobs.lock);
+        pthread_cond_signal(&tp->jobs.empty);
+    }
+    // ! write lock is not released. caller must release it !
 
     return nextJob;
+}
+
+
+/**
+ * Start routine of each thread in the ThreadPool Object.
+ * In a loop, check the job queue, get a job (if any) and run it.
+ * 
+ * @param tp pointer to the ThreadPool object containing this thread
+ */
+void *Thread_run(ThreadPool_t *tp)
+{
+    pthread_t tid = pthread_self();
+    int thread_index = 0;  // get the index of this thread in the thread pool
+    // TODO avoid racing against thread creation in master, or pass idx as arg
+    for (int i = 0; i < tp->num_threads; i++)
+    {
+        if (tp->threads[i] == tid)
+        {
+            thread_index = i;
+            break;
+        }
+    }
+
+    while (true)
+    {
+        ThreadPool_job_t *job = ThreadPool_get_job(tp);  // block until pop
+        pthread_mutex_lock(&tp->busy[thread_index]);
+        pthread_mutex_unlock(&tp->jobs.lock);  // end of queue critical section
+
+        if (job->func == NULL)
+            return NULL;  // kill the thread if receive an empty job
+
+        job->func(job->arg);
+        pthread_mutex_unlock(&tp->busy[thread_index]);
+    }
+}
+
+
+/**
+ * Ensure that all threads are idle and the job queue is empty before returning
+ * 
+ * @param tp pointer to the ThreadPool object containing this thread
+ */
+void ThreadPool_check(ThreadPool_t *tp)
+{
+    pthread_mutex_lock(&tp->jobs.lock);
+    while (tp->jobs.size > 0)  // relinquish lock if still unclaimed jobs
+        pthread_cond_wait(&tp->jobs.empty, &tp->jobs.lock);
+    
+    // if we are here, there are no more unclaimed jobs, and we have the lock
+    for (int i = 0; i < tp->num_threads; i++)
+        pthread_mutex_lock(&tp->busy[i]);  // wait for each thread to finish
+
+    // now that every thread is done, we can release all resources
+    for (int i = 0; i < tp->num_threads; i++)
+        pthread_mutex_unlock(&tp->busy[i]);
+    pthread_mutex_unlock(&tp->jobs.lock);
+    return;  // which signals to caller that threadpool is idle
 }

@@ -22,6 +22,7 @@ typedef struct
 {
     unsigned int size;              // no. jobs in the queue
     pthread_mutex_t lock;           // write lock to protect queue
+    pthread_cond_t empty;           // condition var for no more jobs
     pthread_cond_t notEmpty;        // condition var for >0 jobs
     ThreadPool_job_t *head;         // pointer to the first (shortest) job
     ThreadPool_job_t *tail;         // pointer to last job
@@ -31,7 +32,8 @@ typedef struct
 typedef struct
 {
     unsigned int num_threads;       // number of threads in the pool
-    pthread_t *threads;             // pointer to the array of thread handles
+    pthread_t *threads;             // array of thread handles
+    pthread_mutex_t *busy;          // one busy lock for each thread
     ThreadPool_job_queue_t jobs;    // queue of jobs waiting for a thread to run
 } ThreadPool_t;
 
@@ -90,7 +92,7 @@ void *Thread_run(ThreadPool_t *tp);
 /**
  * Ensure that all threads are idle and the job queue is empty before returning
  * 
- * @param tp pointer to the ThreadPool object that will be destroyed
+ * @param tp pointer to the ThreadPool object containing this thread
  */
 void ThreadPool_check(ThreadPool_t *tp);
 
