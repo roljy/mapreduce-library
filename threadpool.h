@@ -33,13 +33,14 @@ typedef struct
 {
     unsigned int num_threads;       // number of threads in the pool
     pthread_t *threads;             // array of thread handles
-    pthread_mutex_t *busy;          // one busy lock for each thread
+    pthread_mutex_t *running;       // one "busy" lock for each thread
+    pthread_mutex_t master_busy;    // lock for master to run batch operations
     ThreadPool_job_queue_t jobs;    // queue of jobs waiting for a thread to run
 } ThreadPool_t;
 
 
 /**
- * Create a new ThreadPool object
+ * @brief Create a new ThreadPool object
  * 
  * @param num # of threads to create
  * 
@@ -49,9 +50,9 @@ ThreadPool_t *ThreadPool_create(unsigned int num);
 
 
 /**
- * Destroy a ThreadPool object
+ * @brief Destroy a ThreadPool object
  * 
- * ! WARNING: ThreadPool must have no pending or running jobs upon destruction
+ * ThreadPool must have no pending or running jobs upon destruction
  * 
  * @param tp pointer to the ThreadPool object to be destroyed
  */
@@ -59,7 +60,7 @@ void ThreadPool_destroy(ThreadPool_t *tp);
 
 
 /**
- * Add a job to the ThreadPool's job queue
+ * @brief Add a job to the ThreadPool's job queue
  * 
  * @param tp pointer to the ThreadPool object
  * @param func function pointer that will be called by the serving thread
@@ -71,7 +72,11 @@ bool ThreadPool_add_job(ThreadPool_t *tp, thread_func_t func, void *arg);
 
 
 /**
- * Get a job from the job queue of the ThreadPool object
+ * @brief Get a job from the job queue of the ThreadPool object
+ * 
+ * ! WARNING: Caller must release the queue lock after get_job returns.
+ * This is to give the caller time to declare itself busy before others acquire
+ * the lock, particularly ThreadPool_check which will wait to get it.
  * 
  * @param tp pointer to the ThreadPool object
  * 
@@ -81,7 +86,8 @@ ThreadPool_job_t *ThreadPool_get_job(ThreadPool_t *tp);
 
 
 /**
- * Start routine of each thread in the ThreadPool Object.
+ * @brief Start routine of each thread in the ThreadPool Object.
+ * 
  * In a loop, check the job queue, get a job (if any) and run it.
  * 
  * @param tp pointer to the ThreadPool object containing this thread
@@ -90,7 +96,7 @@ void *Thread_run(ThreadPool_t *tp);
 
 
 /**
- * Ensure that all threads are idle and the job queue is empty before returning
+ * @brief Ensure all threads idle and job queue is empty before returning
  * 
  * @param tp pointer to the ThreadPool object containing this thread
  */
