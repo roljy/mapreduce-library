@@ -2,8 +2,7 @@
 // Tawfeeq Mannan
 
 // library includes
-#include <stdio.h>      // printf
-#include <stdlib.h>     // malloc
+#include <stdlib.h>     // malloc, free
 #include <stdbool.h>    // true/false
 #include <pthread.h>    // pthread_create, ...
 
@@ -104,8 +103,9 @@ bool ThreadPool_add_job(ThreadPool_t *tp, thread_func_t func, void *arg)
     else
         tp->jobs.tail->next = newJob;
     tp->jobs.tail = newJob;
+    // wake up all worker threads who may have been blocked on empty queue
     if (++tp->jobs.size == 1)
-        pthread_cond_signal(&tp->jobs.notEmpty);
+        pthread_cond_broadcast(&tp->jobs.notEmpty);
     pthread_mutex_unlock(&tp->jobs.lock);
 
     return true;
