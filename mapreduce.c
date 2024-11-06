@@ -3,9 +3,10 @@
 
 // library includes
 #include <stdio.h>      // printf
-#include <stdlib.h>     // malloc, free
+#include <stdlib.h>     // malloc, free, qsort
 #include <string.h>     // strcmp
 #include <stdbool.h>    // true/false
+#include <sys/stat.h>   // stat
 #include <pthread.h>    // pthread_mutex_t, etc...
 
 // user includes
@@ -17,7 +18,7 @@ typedef struct pair_t
 {
     char *key;
     char *value;
-    pair_t *next;
+    struct pair_t *next;
 } pair_t;
 
 
@@ -34,6 +35,22 @@ typedef struct partition_t
 unsigned int num_partitions;
 ThreadPool_t *threadpool;  // worker thread pool
 partition_t *partitions;  // array of partitions
+
+
+/**
+ * @brief Comparison function for mapper input files, based on file size
+ * 
+ * @param file1 Filename for the 1st comparison arg
+ * @param file2 Filename for the 2nd comparison arg
+ * @return -1 if file1<file2, 1 if file1>file2, 0 if equal
+ */
+int compare_mapper_files(const char *file1, const char *file2)
+{
+    struct stat sb1, sb2;
+    stat(file1, &sb1);
+    stat(file2, &sb2);
+    return (sb1.st_size > sb2.st_size) - (sb1.st_size < sb2.st_size);
+}
 
 
 /**
@@ -59,7 +76,7 @@ void MR_Run(unsigned int file_count,
     // create the thread pool and partition array
     threadpool = ThreadPool_create(num_workers);
     partitions = malloc(sizeof(partition_t) * num_parts);
-    for (int i = 0; i < num_parts; i++)
+    for (unsigned int i = 0; i < num_parts; i++)
     {
         partitions[i].size = 0;
         partitions[i].head = NULL;
@@ -68,8 +85,20 @@ void MR_Run(unsigned int file_count,
     num_partitions = num_parts;
 
     // TODO run the mapper
+    char **sorted_file_names = malloc(sizeof(char *) * file_count);
+    for (unsigned int i = 0; i < file_count; i++)
+        sorted_file_names[i] = file_names[i];
+    qsort(sorted_file_names,
+          file_count,
+          sizeof(char *),
+          (int (*)(const void *, const void *)) compare_mapper_files);
 
     // TODO run the reducer
+
+    // destroy the threadpool and free memory when done
+    ThreadPool_destroy(threadpool);
+    free(partitions);
+    free(sorted_file_names);
 }
 
 
