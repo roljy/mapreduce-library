@@ -32,6 +32,7 @@ typedef struct
 typedef struct
 {
     unsigned int num_threads;       // number of threads in the pool
+    bool exitFlag;                  // flag to signal threadpool should die
     pthread_t *threads;             // array of thread handles
     pthread_mutex_t *running;       // one "busy" lock for each thread
     pthread_mutex_t master_busy;    // lock for master to run batch operations

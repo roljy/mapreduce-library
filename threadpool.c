@@ -21,6 +21,7 @@ ThreadPool_t *ThreadPool_create(unsigned int num)
 {
     ThreadPool_t *tp = malloc(sizeof(ThreadPool_t));
     tp->num_threads = num;
+    tp->exitFlag = false;
     tp->running = malloc(sizeof(pthread_mutex_t) * num);
     pthread_mutex_init(&tp->master_busy, NULL);
 
@@ -57,13 +58,23 @@ void ThreadPool_destroy(ThreadPool_t *tp)
 
     ThreadPool_check(tp);
 
+    // kill each thread now by setting exit flag and broadcasting to wake up
+    tp->exitFlag = true;
+    pthread_cond_broadcast(&tp->jobs.notEmpty);
+
     for (int i = 0; i < tp->num_threads; i++)
     {
-        // cancel each thread now. should have no effect if they're alr done
-        pthread_cancel(tp->threads[i]);
         // wait to join with the thread to ensure resource reclamation
         pthread_join(tp->threads[i], NULL);
     }
+
+    // destroy the mutexes and condition variables safely
+    for (int i = 0; i < tp->num_threads; i++)
+        pthread_mutex_destroy(&tp->running[i]);
+    pthread_cond_destroy(&tp->jobs.empty);
+    pthread_cond_destroy(&tp->jobs.notEmpty);
+    pthread_mutex_destroy(&tp->jobs.lock);
+    pthread_mutex_destroy(&tp->master_busy);
 
     free(tp->threads);
     free(tp->running);
@@ -125,8 +136,14 @@ ThreadPool_job_t *ThreadPool_get_job(ThreadPool_t *tp)
 
     // pop the first job from head of queue (critical section)
     pthread_mutex_lock(&tp->jobs.lock);
-    while (tp->jobs.size == 0)  // relinquish lock if no jobs right now
+    // relinquish lock if no jobs right now and master hasn't yet signalled exit
+    while (tp->jobs.size == 0 && !tp->exitFlag)
         pthread_cond_wait(&tp->jobs.notEmpty, &tp->jobs.lock);
+    if (tp->exitFlag)
+    {
+        pthread_mutex_unlock(&tp->jobs.lock);
+        return NULL;
+    }
 
     // if we are here, there is a job available, and we have the lock
     ThreadPool_job_t *nextJob = tp->jobs.head;
@@ -173,6 +190,7 @@ void *Thread_run(ThreadPool_t *tp)
     while (true)
     {
         ThreadPool_job_t *job = ThreadPool_get_job(tp);  // block until pop
+        if (job == NULL) return NULL;
 
         pthread_mutex_lock(&tp->running[thread_index]);  // signal thread busy
         pthread_mutex_unlock(&tp->jobs.lock);  // end of queue critical section

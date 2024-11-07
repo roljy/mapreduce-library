@@ -2,9 +2,10 @@
 // Tawfeeq Mannan
 
 // library includes
+#define _GNU_SOURCE
 #include <stdio.h>      // printf
 #include <stdlib.h>     // malloc, free, qsort
-#include <string.h>     // strcmp
+#include <string.h>     // strcmp, strdup
 #include <stdbool.h>    // true/false
 #include <sys/stat.h>   // stat
 #include <pthread.h>    // pthread_mutex_t, etc...
@@ -24,7 +25,6 @@ typedef struct pair_t
 
 typedef struct partition_t
 {
-    // TODO do we need the size?
     unsigned int size;          // # of pairs in partition
     pair_t *head;               // linked list of key-value pairs
     pthread_mutex_t lock;       // lock to protect concurrent writes
@@ -47,8 +47,8 @@ partition_t *partitions;  // array of partitions
 int compare_mapper_files(const char *file1, const char *file2)
 {
     struct stat sb1, sb2;
-    stat(file1, &sb1);
-    stat(file2, &sb2);
+    if (stat(file1, &sb1) == -1) return 1;  // fallback if stat fails
+    if (stat(file2, &sb2) == -1) return -1;
     return (sb1.st_size > sb2.st_size) - (sb1.st_size < sb2.st_size);
 }
 
@@ -84,7 +84,7 @@ void MR_Run(unsigned int file_count,
     }
     num_partitions = num_parts;
 
-    // TODO run the mapper
+    // sort the input filenames by ascending file size
     char **sorted_file_names = malloc(sizeof(char *) * file_count);
     for (unsigned int i = 0; i < file_count; i++)
         sorted_file_names[i] = file_names[i];
@@ -93,17 +93,30 @@ void MR_Run(unsigned int file_count,
           sizeof(char *),
           (int (*)(const void *, const void *)) compare_mapper_files);
 
+    // run the mapper
+    for (unsigned int i = 0; i < file_count; i++)
+    {
+        ThreadPool_add_job(threadpool,
+                           (void (*)(void *)) mapper,
+                           sorted_file_names[i]);
+    }
+    ThreadPool_check(threadpool);
+    // mapper is done now
+    free(sorted_file_names);
+
     // TODO run the reducer
 
     // destroy the threadpool and free memory when done
     ThreadPool_destroy(threadpool);
     free(partitions);
-    free(sorted_file_names);
 }
 
 
 /**
  * Write a specifc map output, a <key, value> pair, to a partition
+ * 
+ * Note that the key-value pair consists of newly allocated strings,
+ * must be freed alongside the pair.
  * 
  * @param key output key
  * @param value output value
@@ -111,8 +124,8 @@ void MR_Run(unsigned int file_count,
 void MR_Emit(char *key, char *value)
 {
     pair_t *newPair = malloc(sizeof(pair_t));
-    newPair->key = key;
-    newPair->value = value;
+    newPair->key = strdup(key);
+    newPair->value = strdup(value);
 
     unsigned int part_idx = MR_Partitioner(key, num_partitions);
     // to write pair into partition, enter critical section
@@ -161,4 +174,32 @@ unsigned int MR_Partitioner(char *key, unsigned int num_partitions)
     while ((c = *key++) != '\0')
         hash = hash * 33 + c;
     return hash % num_partitions;
+}
+
+
+/**
+ * Run the reducer callback function for each <key, (list of values)> 
+ * retrieved from a partition
+ * 
+ * @param threadarg pointer to a hidden args object
+ */
+void MR_Reduce(void *threadarg)
+{
+    // TODO implement MR_Reduce
+}
+
+
+/**
+ * Get the next value of the given key in the partition
+ * 
+ * @param key key of the values being reduced
+ * @param partition_idx index of the partition containing this key
+ * 
+ * @return Value of the next <key, value> pair if its key is the current key,
+ *         otherwise NULL
+ */
+char *MR_GetNext(char *key, unsigned int partition_idx)
+{
+    // TODO implement MR_GetNext
+    return NULL;
 }

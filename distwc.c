@@ -2,6 +2,7 @@
 // Tawfeeq Mannan
 
 // library includes
+#define _GNU_SOURCE  // getline and strsep only defined in glibc
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
