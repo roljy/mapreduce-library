@@ -185,7 +185,7 @@ void MR_Reduce(void *threadarg)
 
 
 /**
- * Get the next value of the given key in the partition
+ * Get the next value of the given key in the partition, and pop it out
  * 
  * @param key key of the values being reduced
  * @param partition_idx index of the partition containing this key
@@ -195,6 +195,30 @@ void MR_Reduce(void *threadarg)
  */
 char *MR_GetNext(char *key, unsigned int partition_idx)
 {
-    // TODO implement MR_GetNext
-    return NULL;
+    // traversing this partition is critical, lock it from writes
+    pthread_mutex_lock(&partitions[partition_idx].lock);
+
+    // search the linked list until first match, or quit early if overshot
+    pair_t *prev = NULL, *curr = partitions[partition_idx].head;
+    while (curr != NULL && strcmp(key, curr->key) > 0)    
+    {
+        // our desired key is still too large, keep traversing
+        prev = curr;
+        curr = curr->next;
+    }
+    // now either curr is a good key or we've overshot
+    if (curr == NULL || strcmp(key, curr->key) != 0)
+    {
+        pthread_mutex_unlock(&partitions[partition_idx].lock);
+        return NULL;  // went too far, key doesn't exist
+    }
+
+    // pop the pair out of the partition and return the value
+    if (prev == NULL)
+        partitions[partition_idx].head = curr->next;  // new beginning
+    else
+        prev->next = curr->next;
+    partitions[partition_idx].size--;
+    pthread_mutex_unlock(&partitions[partition_idx].lock);
+    return curr->value;
 }
