@@ -25,17 +25,17 @@ typedef struct pair_t
 
 typedef struct partition_t
 {
-    unsigned int size;          // # of pairs in partition
+    unsigned int size;          // no. of pairs in partition
     pair_t *head;               // linked list of key-value pairs
     pthread_mutex_t lock;       // lock to protect concurrent writes
 } partition_t;
 
 
 // global vars (shared data)
-unsigned int num_partitions;
-ThreadPool_t *threadpool;  // worker thread pool
-partition_t *partitions;  // array of partitions
-Reducer global_reducer;
+unsigned int num_partitions;    // no. of partitions (needed by MR_Emit)
+ThreadPool_t *threadpool;       // worker thread pool
+partition_t *partitions;        // array of partitions
+Reducer global_reducer;         // reducer function (needed by MR_Reduce)
 
 
 /**
@@ -230,6 +230,9 @@ void MR_Reduce(void *threadarg)
 /**
  * Get the next value of the given key in the partition, and pop it out
  * 
+ * Note: while the popped pair and key are freed, the caller is responsible
+ * for freeing the returned value.
+ * 
  * @param key key of the values being reduced
  * @param partition_idx index of the partition containing this key
  * 
@@ -262,6 +265,10 @@ char *MR_GetNext(char *key, unsigned int partition_idx)
     else
         prev->next = curr->next;
     partitions[partition_idx].size--;
+
+    char *value = curr->value;
+    free(curr->key);
+    free(curr);
     pthread_mutex_unlock(&partitions[partition_idx].lock);
-    return curr->value;
+    return value;
 }
