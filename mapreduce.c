@@ -35,6 +35,7 @@ typedef struct partition_t
 unsigned int num_partitions;
 ThreadPool_t *threadpool;  // worker thread pool
 partition_t *partitions;  // array of partitions
+Reducer global_reducer;
 
 
 /**
@@ -50,6 +51,21 @@ int compare_mapper_files(const char *file1, const char *file2)
     if (stat(file1, &sb1) == -1) return 1;  // fallback if stat fails
     if (stat(file2, &sb2) == -1) return -1;
     return (sb1.st_size > sb2.st_size) - (sb1.st_size < sb2.st_size);
+}
+
+
+/**
+ * @brief Comparison function for the reducer partition indices, based on size
+ * 
+ * @param idx1 Pointer to 1st partition index
+ * @param idx2 Pointer to 2nd partition index
+ * @return int -1 if LHS<RHS, 1 if LHS>RHS, 0 if equal
+ */
+int compare_partitions(const unsigned int *idx1, const unsigned int *idx2)
+{
+    // TODO make partition.size reflect the size of the strings, not the count
+    return (partitions[*idx1].size > partitions[*idx2].size)
+            - (partitions[*idx1].size < partitions[*idx2].size);
 }
 
 
@@ -104,7 +120,26 @@ void MR_Run(unsigned int file_count,
     // mapper is done now
     free(sorted_file_names);
 
-    // TODO run the reducer
+    // sort the partition indices by ascending partition size
+    unsigned int *sorted_part_idxs = malloc(sizeof(unsigned int) * num_parts);
+    for (unsigned int i = 0; i < num_parts; i++)
+        sorted_part_idxs[i] = i;
+    qsort(sorted_part_idxs,
+          num_parts,
+          sizeof(unsigned int),
+          (int (*)(const void *, const void *)) compare_partitions);
+
+    // run 1 reduction job per partition (job func is MR_Reduce)
+    global_reducer = reducer;
+    for (unsigned int i = 0; i < num_parts; i++)
+    {
+        ThreadPool_add_job(threadpool,
+                           (void (*)(void *)) MR_Reduce,
+                           &sorted_part_idxs[i]);
+    }
+    ThreadPool_check(threadpool);
+    // reducer is done now
+    free(sorted_part_idxs);
 
     // destroy the threadpool and free memory when done
     ThreadPool_destroy(threadpool);
@@ -173,14 +208,22 @@ unsigned int MR_Partitioner(char *key, unsigned int num_partitions)
 
 
 /**
- * Run the reducer callback function for each <key, (list of values)> 
- * retrieved from a partition
+ * Within a thread, run the reducer callback function for each
+ * <key, (list of values)> retrieved from a partition
  * 
- * @param threadarg pointer to a hidden args object
+ * @param threadarg pointer to the partition index (unsigned int) to reduce
  */
 void MR_Reduce(void *threadarg)
 {
-    // TODO implement MR_Reduce
+    unsigned int partition_idx = *((unsigned int *) threadarg);
+    char *current_key = NULL;
+    while (partitions[partition_idx].head != NULL)
+    {
+        // reduce all the keys matching the current head
+        current_key = strdup(partitions[partition_idx].head->key);
+        global_reducer(current_key, partition_idx);
+        free(current_key);
+    }
 }
 
 

@@ -25,4 +25,4 @@ db_%.o: %.c
 	$(CC) $(CFLAGS) $(DBFLAGS) -c $^ -o $@
 
 clean:
-	rm -f wordcount *.o
+	rm -f wordcount db_wordcount *.o result-*.txt
