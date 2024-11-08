@@ -132,24 +132,19 @@ void MR_Emit(char *key, char *value)
     pthread_mutex_lock(&partitions[part_idx].lock);
 
     // find where to insert the key for ascending order
-    pair_t *prev = partitions[part_idx].head;
-    if (prev == NULL || strcmp(key, prev->key) < 0)
+    pair_t *prev = NULL, *curr = partitions[part_idx].head;
+    while (curr != NULL && strcmp(key, curr->key) >= 0)    
     {
-        // this key must go at the very beginning
-        newPair->next = prev;
-        partitions[part_idx].head = newPair;
+        // our new key is not yet less than this one, keep traversing
+        prev = curr;
+        curr = curr->next;
     }
+    // curr belongs right after this new one, prev right before (except NULL)
+    newPair->next = curr;
+    if (prev == NULL)
+        partitions[part_idx].head = newPair;  // new beginning
     else
-    {
-        while (prev->next != NULL && strcmp(key, prev->next->key) < 0)    
-        {
-            // the next key is still >= this one, try the one after that
-            prev = prev->next;
-        }
-        // now prev is the pair that belongs right before our new one
-        newPair->next = prev->next;
         prev->next = newPair;
-    }
     partitions[part_idx].size++;
 
     // end critical section, we're done writing now
