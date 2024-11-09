@@ -5,7 +5,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>      // printf
 #include <stdlib.h>     // malloc, free, qsort
-#include <string.h>     // strcmp, strdup
+#include <string.h>     // strcmp, strdup, strlen
 #include <stdbool.h>    // true/false
 #include <sys/stat.h>   // stat
 #include <pthread.h>    // pthread_mutex_t, etc...
@@ -17,16 +17,17 @@
 
 typedef struct pair_t
 {
-    char *key;
-    char *value;
-    struct pair_t *next;
+    char *key;                  // key to index by
+    char *value;                // value associated with a key
+    struct pair_t *next;        // pointer to next item in linked list
 } pair_t;
 
 
 typedef struct partition_t
 {
-    unsigned int size;          // no. of pairs in partition
+    unsigned int size;          // total size of kv pairs in partition
     pair_t *head;               // linked list of key-value pairs
+                                // TODO create hash table of starting indices
     pthread_mutex_t lock;       // lock to protect concurrent writes
 } partition_t;
 
@@ -63,7 +64,6 @@ int compare_mapper_files(const char *file1, const char *file2)
  */
 int compare_partitions(const unsigned int *idx1, const unsigned int *idx2)
 {
-    // TODO make partition.size reflect the size of the strings, not the count
     return (partitions[*idx1].size > partitions[*idx2].size)
             - (partitions[*idx1].size < partitions[*idx2].size);
 }
@@ -180,7 +180,10 @@ void MR_Emit(char *key, char *value)
         partitions[part_idx].head = newPair;  // new beginning
     else
         prev->next = newPair;
-    partitions[part_idx].size++;
+
+    // increase partition size counter by combined kv size.
+    // add 2 extra bytes for the null terminators not included by strlen
+    partitions[part_idx].size += strlen(key) + strlen(value) + 2;
 
     // end critical section, we're done writing now
     pthread_mutex_unlock(&partitions[part_idx].lock);
@@ -259,14 +262,17 @@ char *MR_GetNext(char *key, unsigned int partition_idx)
         return NULL;  // went too far, key doesn't exist
     }
 
-    // pop the pair out of the partition and return the value
+    // pop the pair out of the partition
     if (prev == NULL)
         partitions[partition_idx].head = curr->next;  // new beginning
     else
         prev->next = curr->next;
-    partitions[partition_idx].size--;
-
+    
+    // decrease partition size by the total kv size for this pair
     char *value = curr->value;
+    partitions[partition_idx].size -= strlen(key) + strlen(value) + 2;
+
+    // free the pair and return the value
     free(curr->key);
     free(curr);
     pthread_mutex_unlock(&partitions[partition_idx].lock);
